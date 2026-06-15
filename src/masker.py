@@ -39,3 +39,15 @@ def apply_masks(
         seg.element.text = new_text
 
     return doc
+def mask_text(text: str, matches: list[PIIMatch], strategy: str = "label") -> str:
+    """
+    對純文字字串套用遮蔽，不碰 .odt 結構。
+    用於「送給 LLM 之前」的預處理，避免明文 PII 流出。
+    """
+    mask_fn = MASK_STRATEGIES[strategy]
+    new_text = text
+    # 從後往前替換，避免位置偏移影響後面的替換
+    for m in sorted(matches, key=lambda x: x.start, reverse=True):
+        replacement = mask_fn(m.text, m.pii_type)
+        new_text = new_text[:m.start] + replacement + new_text[m.end:]
+    return new_text
