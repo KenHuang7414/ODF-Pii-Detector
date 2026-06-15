@@ -1,7 +1,6 @@
 import re
 from src.config import PIIMatch, PIIType
 
-# 台灣身分證檢查碼驗證
 def validate_tw_id(id_str: str) -> bool:
     if not re.match(r"^[A-Z][12]\d{8}$", id_str):
         return False
@@ -21,8 +20,8 @@ def validate_tw_id(id_str: str) -> bool:
 PATTERNS = {
     PIIType.ID_NUMBER: re.compile(r"\b[A-Z][12]\d{8}\b"),
     PIIType.MOBILE: re.compile(r"09\d{2}[-\s]?\d{3}[-\s]?\d{3}"),
-    PIIType.PHONE: re.compile(r"0[2-8][-\s]?\d{4}[-\s]?\d{4}"),
-    PIIType.EMAIL: re.compile(r"[\w\.-]+@[\w\.-]+\.\w+"),
+    PIIType.PHONE: re.compile(r"\(?0[2-8]\)?[-\s]?\d{3,4}[-\s]?\d{4}"),
+    PIIType.EMAIL: re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
     PIIType.BIRTHDAY: re.compile(
         r"(19|20)\d{2}[/\-年]\d{1,2}[/\-月]\d{1,2}日?"
         r"|民國\s?\d{1,3}\s?年\s?\d{1,2}\s?月\s?\d{1,2}\s?日"
@@ -33,7 +32,6 @@ def detect(text: str) -> list[PIIMatch]:
     matches = []
     for pii_type, pattern in PATTERNS.items():
         for m in pattern.finditer(text):
-            # 身分證額外驗證檢查碼
             if pii_type == PIIType.ID_NUMBER and not validate_tw_id(m.group()):
                 continue
             matches.append(PIIMatch(
