@@ -6,17 +6,17 @@ from src.config import PIIType
 
 class TestValidateTwId:
     def test_valid_ids(self):
-        # 这两个在范本公文里用过，检查码合法
         assert validate_tw_id("A123456789") is True
-        assert validate_tw_id("B234567890") is True
+        assert validate_tw_id("A223456781") is True  
 
     def test_invalid_checksum(self):
         assert validate_tw_id("A123456788") is False
+        assert validate_tw_id("B234567890") is False  # 明確測試這個是不合法的
 
     def test_invalid_format(self):
-        assert validate_tw_id("A12345678") is False      # 少一位
-        assert validate_tw_id("123456789A") is False     # 格式错
-        assert validate_tw_id("a123456789") is False     # 小写
+        assert validate_tw_id("A12345678") is False   # 少一位
+        assert validate_tw_id("123456789A") is False  # 格式錯
+        assert validate_tw_id("a123456789") is False  # 小寫
 
 
 class TestDetectIdNumber:
@@ -67,23 +67,106 @@ class TestDetectEmail:
 
 
 class TestDetectBirthday:
-    def test_detects_western_date(self):
+    def test_detects_western_date_slash(self):
         text = "出生於 1980/07/15。"
         matches = detect(text)
         bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
         assert len(bday) == 1
 
-    def test_minguo_date_with_chinese_numerals_currently_missed(self):
+    def test_detects_western_date_dash(self):
+        text = "出生於 1980-07-15。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 1
+
+    def test_detects_western_date_chinese(self):
+        text = "出生於 1980年7月15日。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 1
+
+    def test_detects_minguo_arabic(self):
+        """民國年＋阿拉伯數字"""
+        text = "出生日期民國75年3月20日。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 1
+
+    def test_detects_minguo_chinese_numerals(self):
         """
-        這個測試會 FAIL，這是預期的。
-        民國七十五年三月二十日 用的是中文數字，目前正則抓不到，
-        要靠 llm_detector.py 補。這個測試的存在是為了「記錄」這個已知限制，
-        提醒之後不要忘記在 llm_detector 的測試裡補上對應案例。
+        民國年＋中文數字，原本是已知限制，升級 pattern 後已支援。
+        這個測試從「斷言抓不到」改為「斷言能抓到」，代表解決了一個已知限制。
         """
         text = "出生日期為民國七十五年三月二十日。"
         matches = detect(text)
         bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
-        assert len(bday) == 0  # 正則層的已知限制
+        assert len(bday) == 1
+        assert "民國七十五年三月二十日" in bday[0].text
+
+    def test_detects_minguo_mixed(self):
+        """民國年＋中文數字年份，阿拉伯數字月日（混用）"""
+        text = "民國九十一年9月9日出生。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 1
+
+    def test_no_false_positive_year_only(self):
+        """只有年沒有月日，不應被抓（交給 LLM 處理）"""
+        text = "民國八十年生。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 0
+
+    def test_no_false_positive_nandu(self):
+        """民國 XX 年度，不應被誤判為生日"""
+        text = "依據教育部113年度科學教育推動計畫辦理。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 0
+
+    def test_no_false_positive_start_year(self):
+        """民國 XX 年起實施，不應被誤判"""
+        text = "本計畫自民國110年起實施。"
+        matches = detect(text)
+        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        assert len(bday) == 0
+
+
+class TestDetectAddress:
+    def test_detects_full_address(self):
+        """完整地址含縣市區路號樓"""
+        text = "聯絡地址為台北市中正區重慶南路一段122號5樓。"
+        matches = detect(text)
+        addr = [m for m in matches if m.pii_type == PIIType.ADDRESS]
+        assert len(addr) == 1
+
+    def test_detects_road_number_only(self):
+        """只有路名和號，沒有縣市區"""
+        text = "住址忠孝東路四段100號。"
+        matches = detect(text)
+        addr = [m for m in matches if m.pii_type == PIIType.ADDRESS]
+        assert len(addr) == 1
+
+    def test_detects_with_lane_alley(self):
+        """含巷弄"""
+        text = "地址中山北路一段3巷5弄12號2樓。"
+        matches = detect(text)
+        addr = [m for m in matches if m.pii_type == PIIType.ADDRESS]
+        assert len(addr) == 1
+
+    def test_no_false_positive_document_number(self):
+        """公文字號含「號」，不應被誤判為地址"""
+        text = "發文字號：府教字第1130012345號。"
+        matches = detect(text)
+        addr = [m for m in matches if m.pii_type == PIIType.ADDRESS]
+        assert len(addr) == 0
+
+    def test_no_false_positive_normal_text(self):
+        """一般文字不應被誤判"""
+        text = "本案經費預算表已檢附於附件，請參閱第三項說明。"
+        matches = detect(text)
+        addr = [m for m in matches if m.pii_type == PIIType.ADDRESS]
+        assert len(addr) == 0
 
 
 class TestNoFalsePositives:
