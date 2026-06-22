@@ -7,7 +7,7 @@ class PIIType(str, Enum):
     MOBILE = "mobile"
     PHONE = "phone"
     EMAIL = "email"
-    BIRTHDAY = "birthday"
+    DATE = "date"
     NAME = "name"
     ORG = "organization"
     ADDRESS = "address"

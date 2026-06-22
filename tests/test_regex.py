@@ -70,26 +70,26 @@ class TestDetectBirthday:
     def test_detects_western_date_slash(self):
         text = "出生於 1980/07/15。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
 
     def test_detects_western_date_dash(self):
         text = "出生於 1980-07-15。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
 
     def test_detects_western_date_chinese(self):
         text = "出生於 1980年7月15日。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
 
     def test_detects_minguo_arabic(self):
         """民國年＋阿拉伯數字"""
         text = "出生日期民國75年3月20日。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
 
     def test_detects_minguo_chinese_numerals(self):
@@ -99,7 +99,7 @@ class TestDetectBirthday:
         """
         text = "出生日期為民國七十五年三月二十日。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
         assert "民國七十五年三月二十日" in bday[0].text
 
@@ -107,28 +107,28 @@ class TestDetectBirthday:
         """民國年＋中文數字年份，阿拉伯數字月日（混用）"""
         text = "民國九十一年9月9日出生。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 1
 
     def test_no_false_positive_year_only(self):
         """只有年沒有月日，不應被抓（交給 LLM 處理）"""
         text = "民國八十年生。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 0
 
     def test_no_false_positive_nandu(self):
         """民國 XX 年度，不應被誤判為生日"""
         text = "依據教育部113年度科學教育推動計畫辦理。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 0
 
     def test_no_false_positive_start_year(self):
         """民國 XX 年起實施，不應被誤判"""
         text = "本計畫自民國110年起實施。"
         matches = detect(text)
-        bday = [m for m in matches if m.pii_type == PIIType.BIRTHDAY]
+        bday = [m for m in matches if m.pii_type == PIIType.DATE]
         assert len(bday) == 0
 
 
