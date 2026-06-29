@@ -68,7 +68,12 @@ def run(
             verify_doc = odt_io.load(masked_path)
             verify_text, verify_segs = odt_io.extract_text(verify_doc)
             residual = llm_detector.detect(verify_text)
-            residual = [m for m in residual if "█" not in m.text and "○" not in m.text]
+            residual = [
+                m for m in residual 
+                if "█" not in m.text 
+                and "○" not in m.text 
+                and not (m.text.startswith("[") and m.text.endswith("]"))
+            ]
             if not residual:
                 print(f"      → 通過")
                 break
