@@ -19,7 +19,7 @@ class PIIMatch:
     start: int                 # 在純文字中的起始位置
     end: int                   # 結束位置
     confidence: float          # 0.0 ~ 1.0
-    source: Literal["regex", "llm"]
+    source: Literal["regex", "llm", "ckip"]
     context: str = ""          # 前後文（debug 用）
 
 # 遮蔽策略

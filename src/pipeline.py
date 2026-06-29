@@ -1,6 +1,7 @@
 from pathlib import Path
-from src import odt_io, regex_detector, llm_detector, masker, reporter
+from src import odt_io, regex_detector, llm_detector, masker, reporter, ckip_detector
 from src.config import PIIMatch
+
 
 def remap_to_original(llm_matches: list[PIIMatch], full_text: str) -> list[PIIMatch]:
     remapped = []
@@ -26,6 +27,7 @@ def run(
     strategy: str = "block",
     use_llm: bool = True,
     max_validation_rounds: int = 2,
+    known_names: list[str] | None = None,
 ) -> dict:
     Path(output_dir).mkdir(exist_ok=True)
     input_name = Path(input_path).stem
@@ -35,32 +37,31 @@ def run(
     full_text, segments = odt_io.extract_text(doc)
 
     print(f"[2/5] 正則掃描")
-    regex_matches = regex_detector.detect(full_text)
+    regex_matches = regex_detector.detect(full_text)          # ← 先定義
     print(f"      → 找到 {len(regex_matches)} 筆")
-    # Debug
-    safe_text = masker.mask_text(full_text, regex_matches, strategy="label")
-    print(safe_text[:400])
+
+    # CKIP 使用者自訂姓名偵測（放在 regex_matches 之後）
+    if known_names:
+        ckip_detector.set_known_names(known_names)
+    ckip_matches = ckip_detector.detect(full_text)
+    if ckip_matches:
+        print(f"      [CKIP] 找到 {len(ckip_matches)} 筆姓名")
 
     llm_matches = []
     if use_llm:
-        # === 新增：送給 Claude 前，先把正則找到的高敏感資訊換成 placeholder ===
         safe_text = masker.mask_text(full_text, regex_matches, strategy="label")
-
         print(f"[3/5] Claude 掃描（已遮蔽身分證/電話/Email 等高敏感欄位）")
         llm_matches_raw = llm_detector.detect(safe_text)
-        # === 新增：把位置對應回原始文字 ===
         llm_matches = remap_to_original(llm_matches_raw, full_text)
         print(f"      → 找到 {len(llm_matches)} 筆")
 
-    all_matches = llm_detector.merge(regex_matches, llm_matches)
+    all_matches = llm_detector.merge(regex_matches + ckip_matches, llm_matches)
     print(f"[4/5] 合併後共 {len(all_matches)} 筆，套用遮蔽")
 
     masked_doc = masker.apply_masks(doc, segments, all_matches, strategy)
     masked_path = f"{output_dir}/{input_name}_masked.odt"
     odt_io.save(masked_doc, masked_path)
 
-    # 自我驗證 loop（不變，因為這裡讀的本來就是已遮蔽的 masked.odt，
-    # 不存在明文 PII 外洩的問題）
     if use_llm:
         for round_n in range(1, max_validation_rounds + 1):
             print(f"[驗證 round {round_n}] 重新檢查遮蔽結果")
