@@ -2,46 +2,46 @@ from odfdo import Document
 from src.config import PIIMatch, MASK_STRATEGIES
 from src.odt_io import TextSegment
 
-# ODF text 命名空間
 _TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
 _LINE_BREAK_TAG = f"{{{_TEXT_NS}}}line-break"
 _TAB_TAG = f"{{{_TEXT_NS}}}tab"
 
 
-def _walk_text_nodes(el, cursor=0, is_root=True):
-    """
-    深度遍歷 lxml element，產生跟 text_recursive 完全對齊的位置映射。
-    回傳 (list of nodes, next_cursor)
-      每個 node = (start, end, holder, attr)
-        - holder + attr 非 None: 可寫入的文字節點
-        - holder is None: line-break / tab 的虛擬字元，不可寫入
-    """
+def _walk_text_nodes(el, cursor=0):
+    """走訪 lxml element，產生跟 text_recursive 對齊的位置映射"""
     nodes = []
-
     if el.text:
         nodes.append((cursor, cursor + len(el.text), el, 'text'))
         cursor += len(el.text)
-
     for child in el:
         tag = child.tag
-        if tag == _LINE_BREAK_TAG:
-            # text_recursive 把它變成 '\n'，占 1 字元
-            nodes.append((cursor, cursor + 1, None, None))
-            cursor += 1
-        elif tag == _TAB_TAG:
-            # text_recursive 把它變成 '\t'，占 1 字元
+        if tag == _LINE_BREAK_TAG or tag == _TAB_TAG:
             nodes.append((cursor, cursor + 1, None, None))
             cursor += 1
         else:
-            # span 等內嵌元素，遞迴進去
-            sub_nodes, cursor = _walk_text_nodes(child, cursor, is_root=False)
+            sub_nodes, cursor = _walk_text_nodes(child, cursor)
             nodes.extend(sub_nodes)
-
         if child.tail:
             nodes.append((cursor, cursor + len(child.tail), child, 'tail'))
             cursor += len(child.tail)
-
     return nodes, cursor
+
+
+def _deduplicate(matches: list[PIIMatch]) -> list[PIIMatch]:
+    """
+    去除重疊的 match，重疊時保留範圍較大的那一筆。
+    例：「教育部」和「教育部113年度科學教育推動計畫」重疊，保留後者。
+    """
+    if not matches:
+        return matches
+    # 依「範圍大→start 小」排序，優先選範圍大的
+    sorted_m = sorted(matches, key=lambda m: (-(m.end - m.start), m.start))
+    kept = []
+    for m in sorted_m:
+        overlap = any(not (m.end <= k.start or m.start >= k.end) for k in kept)
+        if not overlap:
+            kept.append(m)
+    return sorted(kept, key=lambda m: m.start)
 
 
 def apply_masks(
@@ -51,6 +51,8 @@ def apply_masks(
     strategy: str = "block",
 ) -> Document:
     mask_fn = MASK_STRATEGIES[strategy]
+    # 先去除重疊
+    matches = _deduplicate(matches)
 
     for seg in segments:
         seg_end = seg.global_start + len(seg.text)
@@ -63,59 +65,62 @@ def apply_masks(
 
         el = seg.element._xml_element
 
-        # 換算到段落內的相對位置
-        local_matches = [
-            (m.start - seg.global_start, m.end - seg.global_start, m)
-            for m in seg_matches
-        ]
+        # 一次性算出節點佈局（基於原始 seg.text）
+        nodes, _ = _walk_text_nodes(el)
 
-        # 從後往前替換，避免前面的替換影響後面 match 的位置
-        for local_start, local_end, m in sorted(
-            local_matches, key=lambda x: x[0], reverse=True
-        ):
+        # 為每個 match 預先算好「要寫到哪個 holder/attr，rel_start, rel_end, replacement」
+        # 由於去重後 match 不會重疊，所以可以批次處理
+        # 對每個 holder/attr 分別收集要替換的區段
+        # key = id(holder)+attr, value = (holder, attr, [(rel_start, rel_end, replacement), ...])
+        pending = {}
+
+        for m in seg_matches:
+            local_start = m.start - seg.global_start
+            local_end = m.end - seg.global_start
             replacement = mask_fn(m.text, m.pii_type)
 
-            # 每次替換前重新計算節點佈局（因前一次替換可能改變了文字長度）
-            nodes, _ = _walk_text_nodes(el)
-
-            # 找出 match 跨越的所有節點
-            affected = []
+            # 找出 match 跨越的可寫節點
+            affected_writable = []
             for n_start, n_end, holder, attr in nodes:
+                if holder is None:
+                    continue
                 overlap_start = max(local_start, n_start)
                 overlap_end = min(local_end, n_end)
                 if overlap_start >= overlap_end:
                     continue
-                affected.append((n_start, n_end, holder, attr, overlap_start, overlap_end))
+                rel_start = overlap_start - n_start
+                rel_end = overlap_end - n_start
+                affected_writable.append((n_start, holder, attr, rel_start, rel_end))
 
-            if not affected:
+            if not affected_writable:
                 continue
 
-            # 從後往前寫入：最後一個被 match 涵蓋的可寫節點放完整 replacement
-            # 其餘節點把 match 範圍內的內容清空
-            replacement_written = False
-            for n_start, n_end, holder, attr, o_start, o_end in reversed(affected):
-                if holder is None:
-                    # line-break/tab，保留結構不動
-                    continue
-                rel_start = o_start - n_start
-                rel_end = o_end - n_start
-                val = getattr(holder, attr)
-                if not replacement_written:
-                    new_val = val[:rel_start] + replacement + val[rel_end:]
-                    replacement_written = True
+            # 把 replacement 寫到最後一個 affected 節點（從後往前的第一個）
+            # 前面的節點把 match 範圍內的內容清空
+            for i, (n_start, holder, attr, rel_start, rel_end) in enumerate(affected_writable):
+                key = (id(holder), attr)
+                if key not in pending:
+                    pending[key] = (holder, attr, [])
+                is_last = (i == len(affected_writable) - 1)
+                if is_last:
+                    pending[key][2].append((rel_start, rel_end, replacement))
                 else:
-                    new_val = val[:rel_start] + val[rel_end:]
-                setattr(holder, attr, new_val)
+                    pending[key][2].append((rel_start, rel_end, ""))
+
+        # 對每個文字節點，從後往前套用替換
+        for key, (holder, attr, edits) in pending.items():
+            val = getattr(holder, attr)
+            for rel_start, rel_end, replacement in sorted(edits, key=lambda x: x[0], reverse=True):
+                val = val[:rel_start] + replacement + val[rel_end:]
+            setattr(holder, attr, val)
 
     return doc
 
 
 def mask_text(text: str, matches: list[PIIMatch], strategy: str = "label") -> str:
-    """
-    對純文字字串套用遮蔽，不碰 .odt 結構。
-    用於「送給 LLM 之前」的預處理，避免明文 PII 流出。
-    """
+    """對純文字字串套用遮蔽，用於送 LLM 之前的預處理"""
     mask_fn = MASK_STRATEGIES[strategy]
+    matches = _deduplicate(matches)
     new_text = text
     for m in sorted(matches, key=lambda x: x.start, reverse=True):
         replacement = mask_fn(m.text, m.pii_type)

@@ -12,14 +12,14 @@ SYSTEM_PROMPT = """你是台灣公文個資審查員，專門找出文件中可�
 - organization: 學校、單位、公司名稱
 - date: 日期資訊（如「民國八十年三月生」）
 - address: 地址（含部分地址如「住台北市信義區」）
-- school_id: 學號
+- student_number: 學號
 
 不要重複偵測：身分證號、Email、電話/手機（這些已經由正則處理）。
 
 只回傳 JSON，不要任何其他文字。格式：
 {
   "detections": [
-    {"text": "原文中的確切片段", "type": "name|organization|date|address|school_id", "confidence": 0.0-1.0}
+    {"text": "原文中的確切片段", "type": "name|organization|date|address|student_number", "confidence": 0.0-1.0}
   ]
 }
 
