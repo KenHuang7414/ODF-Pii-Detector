@@ -11,7 +11,7 @@ class PIIType(str, Enum):
     NAME = "name"
     ORG = "organization"
     ADDRESS = "address"
-    SCHOOL_ID = "school_id"
+    STD_NUMBER = "student_number"
 
 @dataclass
 class PIIMatch:
